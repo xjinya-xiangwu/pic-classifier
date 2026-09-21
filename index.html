@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PhotoCurator — 服装照片整理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #222; background: #f5f5f7; }
+  header { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid #e5e5ea; padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin-right: 8px; }
+  input[type=text], input[type=number], input[type=password], select { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  #folder { flex: 1; min-width: 260px; }
+  button { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; }
+  button.primary { background: #0a66ff; border-color: #0a66ff; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  label.chk { font-size: 13px; color: #555; }
+  #progress { width: 100%; font-size: 13px; color: #555; padding: 4px 16px; background: #fff; }
+  .bar { height: 6px; background: #e5e5ea; border-radius: 3px; overflow: hidden; margin-top: 3px; }
+  .bar i { display: block; height: 100%; background: #0a66ff; width: 0; transition: width .4s; }
+  main { display: flex; height: calc(100vh - 92px); }
+  aside { width: 230px; overflow-y: auto; border-right: 1px solid #e5e5ea; background: #fff; }
+  aside .g { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
+  aside .g:hover { background: #f0f6ff; }
+  aside .g.cur { background: #e3eeff; font-weight: 600; }
+  aside .g .done { color: #0a9e4a; }
+  section { flex: 1; overflow-y: auto; padding: 12px 16px 80px; }
+  #grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  .card { width: 150px; background: #fff; border: 2px solid transparent; border-radius: 8px; overflow: hidden; cursor: pointer; position: relative; }
+  .card img { width: 100%; height: 150px; object-fit: cover; display: block; background: #eee; }
+  .card .meta { padding: 4px 6px; font-size: 11px; color: #666; word-break: break-all; }
+  .card.sel { border-color: #0a9e4a; }
+  .card.sel::after { content: "★ 已选保留"; position: absolute; top: 4px; left: 4px; background: #0a9e4a; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+  .card.reco:not(.sel) { border-color: #9db9ff; }
+  .card.reco:not(.sel)::after { content: "AI推荐"; position: absolute; top: 4px; left: 4px; background: #0a66ff; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 4px; opacity: .85; }
+  .badge { position: absolute; right: 4px; top: 4px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }
+  #footer { position: fixed; bottom: 0; left: 230px; right: 0; background: #fff; border-top: 1px solid #e5e5ea; padding: 10px 16px; display: flex; gap: 10px; align-items: center; font-size: 13px; color: #555; }
+  #intro { max-width: 560px; margin: 80px auto; background: #fff; padding: 28px; border-radius: 10px; line-height: 1.9; }
+  dialog { border: none; border-radius: 10px; padding: 20px; width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  dialog h3 { margin-bottom: 12px; }
+  dialog .row { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  dialog .row label { width: 130px; font-size: 13px; color: #555; flex-shrink: 0; }
+  dialog .row input, dialog .row select { flex: 1; }
+  dialog .hint { font-size: 12px; color: #888; margin: 4px 0 10px; }
+  kbd { background: #eee; border-radius: 3px; padding: 0 4px; border: 1px solid #ddd; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 PhotoCurator</h1>
+  <input type="text" id="folder" placeholder="输入照片文件夹路径, 如 /Users/you/Photos/0921">
+  <label class="chk"><input type="checkbox" id="recursive"> 含子文件夹</label>
+  <button class="primary" onclick="openFolder()">扫描</button>
+  <button onclick="startTag()">开始识别</button>
+  <button onclick="stopTag()" id="stopBtn" style="display:none">暂停</button>
+  <button onclick="openSettings()">设置</button>
+</header>
+<div id="progress" style="display:none"><span id="ptext"></span><div class="bar"><i id="pbar"></i></div></div>
+<main id="main" style="display:none">
+  <aside id="glist"></aside>
+  <section>
+    <h2 id="gtitle" style="font-size:15px; margin-bottom:10px"></h2>
+    <div id="grid"></div>
+  </section>
+</div>
+<div id="footer" style="display:none">
+  <span id="stats"></span>
+  <span style="flex:1"></span>
+  <span>点击缩略图 = 选为该组保留 · <kbd>←→</kbd>移动 <kbd>空格</kbd>选中 <kbd>回车</kbd>下一组</span>
+  <button onclick="undoRename()">撤销上次重命名</button>
+  <button class="primary" onclick="doRename()">完成验收 → 原地重命名</button>
+</div>
+<div id="intro">
+  <h2>三步整理一批照片</h2>
+  <p>1. 上方输入文件夹路径 → <b>扫描</b>(支持 heic / jpg / jpeg / png)<br>
+     2. 配置模型 API 后 → <b>开始识别</b>(逐张调用视觉模型判断衣着/姿势/角度)<br>
+     3. 逐组点击挑选每组的保留照片 → <b>原地重命名</b>(只改文件名, 可一键撤销)</p>
+  <p style="color:#888">照片仅压缩后发送给你配置的模型 API; 分组结果与撤销记录保存在 ~/.photocurator/。</p>
+</div>
+<dialog id="settingsDlg">
+  <h3>设置</h3>
+  <div class="row"><label>API 地址</label><input type="text" id="s_base_url"></div>
+  <div class="row"><label>模型名</label><input type="text" id="s_model"></div>
+  <div class="row"><label>API Key</label><input type="password" id="s_api_key" placeholder="智谱等平台密钥"></div>
+  <p class="hint">默认智谱 GLM(OpenAI 兼容协议)。Key 只保存在本机 ~/.photocurator/。</p>
+  <div class="row"><label>并发数</label><input type="number" id="s_concurrency" min="1" max="16"></div>
+  <div class="row"><label>输入价(元/百万token)</label><input type="number" id="s_price_in" step="0.1"></div>
+  <div class="row"><label>输出价(元/百万token)</label><input type="number" id="s_price_out" step="0.1"></div>
+  <div class="row"><label>分组粒度</label>
+    <select id="s_granularity">
+      <option value="coarse">粗 (衣着+朝向)</option>
+      <option value="medium">中 (衣着+姿势+朝向+景别, 默认)</option>
+      <option value="fine">细 (全维度)</option>
+    </select></div>
+  <div class="row"><label>期望组数(0=不限)</label><input type="number" id="s_target_count" min="0"></div>
+  <p class="hint">切换粒度/组数即时生效, 不重新调用 API。</p>
+  <div style="text-align:right"><button onclick="settingsDlg.close()">取消</button> <button class="primary" onclick="saveSettings()">保存</button></div>
+</dialog>
+<script>
+let D = null, curG = 0, focusI = 0;
+const $ = id => document.getElementById(id);
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : undefined);
+  const j = await r.json();
+  if (j.error) { alert(j.error); throw new Error(j.error); }
+  return j;
+}
+function openFolder() { api("/api/open", {folder: $("folder").value.trim(), recursive: $("recursive").checked}); poll(); }
+function startTag() { api("/api/tag", {}); poll(); }
+function stopTag() { fetch("/api/tag/stop", {method: "POST"}); }
+
+async function poll() {
+  try { D = await (await fetch("/api/state")).json(); } catch (e) { return; }
+  render();
+}
+setInterval(poll, 2000);
+
+function render() {
+  const s = D.settings || {}, p = D.project;
+  // 进度区
+  let ptxt = "", pct = 0, scanning = false;
+  if (D.scan) { scanning = true; ptxt = `扫描中 ${D.scan.done}/${D.scan.total}` + (D.scan.errors.length ? ` · 异常 ${D.scan.errors.length} 个` : ""); pct = D.scan.total ? 100 * D.scan.done / D.scan.total : 0; }
+  else if (D.tag) { scanning = true; ptxt = `识别中 ${D.tag.done}/${D.tag.total} · 失败 ${D.tag.failed}`; pct = D.tag.total ? 100 * D.tag.done / D.tag.total : 0; }
+  $("progress").style.display = scanning ? "block" : "none";
+  if (scanning) { $("ptext").textContent = ptxt; $("pbar").style.width = pct + "%"; }
+  $("stopBtn").style.display = D.tag ? "" : "none";
+  const ready = p && p.tagged > 0 && D.groups && D.groups.length;
+  $("main").style.display = ready ? "flex" : "none";
+  $("intro").style.display = ready || scanning ? "none" : "block";
+  $("footer").style.display = p ? "flex" : "none";
+  if (!ready) { if (p) $("stats").textContent = `已扫描 ${p.total} 张 · 已识别 ${p.tagged} 张 · 失败 ${p.failed} 张`; return; }
+  curG = Math.min(curG, D.groups.length - 1);
+  // 组列表
+  $("glist").innerHTML = D.groups.map((g, i) =>
+    `<div class="g ${i === curG ? "cur" : ""}" onclick="curG=${i};focusI=0;render()">
+      <span>${g.name}</span><span>${g.n}张 ${g.members.some(m => m.selected) ? '<span class="done">✓</span>' : ""}</span></div>`).join("")
+    + (D.ungrouped ? `<div class="g" style="color:#999"><span>未识别/失败</span><span>${D.ungrouped}张</span></div>` : "");
+  // 当前组网格
+  const g = D.groups[curG];
+  $("gtitle").textContent = `${g.name} · 共 ${g.n} 张`;
+  $("grid").innerHTML = g.members.map((m, i) =>
+    `<div class="card ${m.selected ? "sel" : ""} ${i === 0 ? "reco" : ""}" onclick="pick(${m.id})">
+      <img loading="lazy" src="/thumb/${m.hash}.jpg" onerror="this.style.background='#ccc'">
+      ${m.flags ? `<span class="badge" title="${m.flags}">${m.quality}分</span>` : `<span class="badge">${m.quality}分</span>`}
+      <div class="meta">${m.filename}</div></div>`).join("");
+  $("stats").textContent = `共 ${D.groups.length} 组 ${p.tagged} 张 · 已选 ${D.groups.reduce((a, x) => a + x.members.filter(m => m.selected).length, 0)} 组` +
+    (p.cost ? ` · 已用 ¥${p.cost}` : "") + (p.failed ? ` · 失败 ${p.failed}` : "");
+  document.title = `${curG + 1}/${D.groups.length} ${g.name} — PhotoCurator`;
+}
+
+async function pick(id) {
+  await api("/api/select", {id});
+  poll();
+}
+
+function fillSettings() {
+  const s = D.settings;
+  $("s_base_url").value = s.base_url; $("s_model").value = s.model;
+  $("s_api_key").value = ""; $("s_api_key").placeholder = s.api_key ? "已保存 (留空则不修改)" : "sk-...";
+  $("s_concurrency").value = s.concurrency; $("s_price_in").value = s.price_in; $("s_price_out").value = s.price_out;
+  $("s_granularity").value = s.granularity; $("s_target_count").value = s.target_count;
+}
+const settingsDlg = $("settingsDlg");
+function openSettings() { fillSettings(); settingsDlg.showModal(); }
+settingsDlg.addEventListener("open", fillSettings);
+async function saveSettings() {
+  const body = {base_url: $("s_base_url").value.trim(), model: $("s_model").value.trim(),
+    concurrency: +$("s_concurrency").value, price_in: +$("s_price_in").value, price_out: +$("s_price_out").value,
+    granularity: $("s_granularity").value, target_count: +$("s_target_count").value};
+  if ($("s_api_key").value.trim()) body.api_key = $("s_api_key").value.trim();
+  await api("/api/settings", body);
+  await poll();
+  settingsDlg.close();
+}
+
+async function doRename() {
+  const n = D.groups.length, total = D.project.tagged;
+  if (!confirm(`将把 ${n} 个组共 ${total} 张照片在源文件夹内重命名:\n组内文件 → 组名_序号.扩展名, 每组选中 1 张加"_精选"标记。\n未选保留的组不会被标精选。此操作可用"撤销"一键还原。\n\n确认执行?`)) return;
+  const r = await api("/api/rename", {});
+  poll();
+  alert(`已重命名 ${r.renamed} 张` + (r.skipped.length ? `, 跳过 ${r.skipped.length} 张:\n` + r.skipped.join("\n") : "") + `\n清单: ${r.manifest}`);
+}
+async function undoRename() {
+  if (!confirm("撤销上次重命名, 恢复全部原文件名?")) return;
+  const r = await api("/api/undo", {});
+  poll();
+  alert(`已还原 ${r.restored} 个文件名`);
+}
+
+document.addEventListener("keydown", e => {
+  if (!D || !D.groups || !D.groups.length || settingsDlg.open || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  const g = D.groups[curG];
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") { focusI = Math.min(focusI + 1, g.members.length - 1); highlight(); }
+  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { focusI = Math.max(focusI - 1, 0); highlight(); }
+  else if (e.key === " ") { e.preventDefault(); pick(g.members[focusI].id); }
+  else if (e.key === "Enter") { curG = Math.min(curG + 1, D.groups.length - 1); focusI = 0; render(); }
+});
+function highlight() {
+  const cards = [...document.querySelectorAll("#grid .card")];
+  cards.forEach((c, i) => c.style.outline = i === focusI ? "3px solid #ff9500" : "");
+  if (cards[focusI]) cards[focusI].scrollIntoView({block: "nearest"});
+}
+poll();
+</script>
+</body>
+</html>
