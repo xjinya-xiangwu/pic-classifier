@@ -1,0 +1,63 @@
+#!/bin/bash
+# PhotoCurator macOS 一键安装器。
+# 用法: 浏览器打开本脚本的 GitHub 页面下载, 或直接:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/xjinya-xiangwu/pic-classifier/main/install_mac.sh)
+# 效果: 下载代码到 ~/PhotoCurator, 装好依赖, 在 /Applications 生成 PhotoCurator.app 并启动。
+# 更新版本: 重新执行一次本命令即可。
+set -e
+
+DEST="$HOME/PhotoCurator"
+APP="/Applications/PhotoCurator.app"
+REPO_TARBALL="https://codeload.github.com/xjinya-xiangwu/pic-classifier/tar.gz/refs/heads/main"
+
+echo "==> 1/4 下载代码到 $DEST"
+rm -rf "$DEST"
+mkdir -p "$DEST"
+curl -fsSL "$REPO_TARBALL" | tar -xz -C "$DEST" --strip-components=1
+
+echo "==> 2/4 准备 Python (缺失时会弹出开发者工具安装窗口, 点\"安装\"后本脚本自动继续)"
+until python3 -c "" 2>/dev/null; do
+  xcode-select --install 2>/dev/null || true
+  echo "    等待 python3 可用... (若弹出安装窗口请点击安装, 约 2-5 分钟)"
+  sleep 10
+done
+
+echo "==> 3/4 安装依赖 (首次约 1-2 分钟)"
+cd "$DEST"
+[ -d .venv ] || python3 -m venv .venv
+./.venv/bin/pip install -q -r requirements.txt
+
+echo "==> 4/4 生成 /Applications/PhotoCurator.app"
+mkdir -p "$APP/Contents/MacOS"
+cat > "$APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>PhotoCurator</string>
+  <key>CFBundleDisplayName</key><string>PhotoCurator</string>
+  <key>CFBundleExecutable</key><string>PhotoCurator</string>
+  <key>CFBundleIdentifier</key><string>local.photocurator.app</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+cat > "$APP/Contents/MacOS/PhotoCurator" <<'LAUNCH'
+#!/bin/bash
+# 双击入口: 确保依赖后启动本地服务, 日志在 ~/PhotoCurator/app.log
+cd "$HOME/PhotoCurator"
+if [ ! -x .venv/bin/python ]; then
+  python3 -m venv .venv
+  ./.venv/bin/pip install -q -r requirements.txt
+fi
+exec ./.venv/bin/python app.py >> "$HOME/PhotoCurator/app.log" 2>&1
+LAUNCH
+chmod +x "$APP/Contents/MacOS/PhotoCurator"
+
+echo "==> 启动 PhotoCurator (浏览器将自动打开)"
+open "$APP"
+echo ""
+echo "完成! 以后在 启动台/应用程序 里双击 PhotoCurator 即可。"
+echo "  - App 日志: ~/PhotoCurator/app.log"
+echo "  - 升级版本: 重新执行本安装命令"
+echo "  - 首次扫描时若询问文件夹访问权限, 点\"允许\""
