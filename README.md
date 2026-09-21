@@ -4,11 +4,20 @@
 
 ## 安装与运行（macOS）
 
-首次：双击 `run.command`（或终端执行 `chmod +x run.command && ./run.command`），自动创建虚拟环境并安装依赖，然后启动本地服务并打开浏览器。
+**推荐方式（一定能跑）**：打开「终端」（启动台搜索"终端"），输入 `bash `（注意末尾有空格），把 `run.command` 文件拖进终端窗口，回车。首次会自动创建虚拟环境并安装依赖，然后启动本地服务并打开浏览器。
 
-以后每次：双击 `run.command` 即可。
+以后想双击运行，只需修复一次执行权限：在终端里 `cd` 到本目录后执行 `chmod +x run.command`，之后双击 `run.command` 即可。
 
 Windows 调试环境用 `run.bat`。
+
+## macOS 常见拦截与解决
+
+| 现象 | 原因 | 解决 |
+| --- | --- | --- |
+| 「无法执行，因为没有正确的访问权限」 | 从 Windows/微信传来的文件丢失可执行位 | 用上面 `bash run.command` 方式运行；或 `chmod +x run.command` 后双击 |
+| 「无法验证开发者 / 已损坏」 | macOS 隔离标记（网络下载） | 系统设置 → 隐私与安全性 → 点「仍要打开」；或终端执行 `xattr -dr com.apple.quarantine .`（在本目录下） |
+| 首次扫描时询问「"python"想要访问文件夹」 | macOS 访问控制 | 点「允许」 |
+| 报错含 `$'\r': command not found` | 文件被转成 Windows 换行符 | 重新 `git clone` 本仓库获取正确版本，不要用微信传文件 |
 
 ## 使用流程
 

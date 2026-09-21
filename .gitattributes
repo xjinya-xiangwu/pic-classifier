@@ -1,0 +1,6 @@
+# 统一 LF 换行, 防止在 Windows 上编辑后传到 macOS 时 run.command 因 CRLF 报错
+* text=auto eol=lf
+*.bat eol=crlf
+*.png binary
+*.heic binary
+*.jpg binary
