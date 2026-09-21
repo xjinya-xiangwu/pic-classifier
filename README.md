@@ -14,7 +14,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xjinya-xiangwu/pic-classifie
 
 > 若 `raw.githubusercontent.com` 打不开（网络原因）：在浏览器打开仓库里的 `install_mac.sh` → 原始内容 → 另存为 `install_mac.sh`，然后终端执行 `bash ` 拖入该文件回车，效果相同。
 
-**首次准备**：安装过程中若弹出「命令行开发者工具」安装窗口，点**安装**等 2-5 分钟，脚本会自动继续；装好后在 App「设置」里填 boyue 中转站的 API Key（sk- 开头，每台 Mac 填一次）。
+**首次准备**：安装过程中若弹出「命令行开发者工具」安装窗口，点**安装**等 2-5 分钟，脚本会自动继续；装好后在 App「设置」里填 boyue 中转站的 API Key（sk- 开头，每台 Mac 填一次）。**注意：API 地址、模型名、Key 必须是同一家服务商的配套信息**——用 boyue 中转的 Key 就要同时把「API 地址」改成 boyue 提供的地址（并把模型名改成它支持的名称），只换 Key 不换地址会识别全部失败。
 
 <details>
 <summary>老方法：手动下载 ZIP + 终端运行（备选）</summary>
@@ -39,6 +39,7 @@ Windows 调试环境用 `run.bat`。
 | 「无法验证开发者 / 已损坏」 | macOS 隔离标记（网络下载） | 系统设置 → 隐私与安全性 → 点「仍要打开」；或终端执行 `xattr -dr com.apple.quarantine .`（在本目录下） |
 | 安装最后出现 `_LSOpenURLsWithCompletionHandler() failed with error -600`，浏览器没自动打开 | 老系统上刚生成的 App 未及时注册进 LaunchServices（旧版安装器缺陷，v1.1 起已改为直接拉起服务，不再经过 `open`） | 重新执行安装命令升级；或手动双击 App，浏览器访问 `http://127.0.0.1:8765` |
 | 页面能打开，但所有按钮点了都没反应、设置打不开 | 旧版前端用了老款 Safari（≤15.3）不支持的 `<dialog>`/`??` 语法，脚本整体失效（已修复） | 重新执行安装命令升级后再试；若仍异常，页面顶部会出现红色错误横幅，请截图反馈 |
+| 「开始识别」后照片全部/大量失败 | 多为配置问题：Key 与 API 地址/模型名不配套、网络不通、欠费；识别开头连续 5 张全部失败会自动熔断停止，避免白白消耗 | 点统计栏「失败 N 张 (点看原因)」查看具体报错，按提示修正设置后重新点「开始识别」（已失败的照片会自动重试） |
 | 首次扫描时询问「"python"想要访问文件夹」 | macOS 访问控制 | 点「允许」 |
 | 报错含 `$'\r': command not found` | 文件被转成 Windows 换行符 | 重新 `git clone` 本仓库获取正确版本，不要用微信传文件 |
 
@@ -66,3 +67,4 @@ Windows 调试环境用 `run.bat`。
 ## 测试
 
 `python test_smoke.py` — 覆盖 扫描 → 模拟打标 → 分组/合并 → 互斥选择 → 重命名 → 撤销 全链路。
+`python test_e2e_mock.py` — 用本机 mock 模型服务验证识别成功路径 + 配置错误时的自动熔断与失败原因下发。

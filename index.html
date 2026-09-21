@@ -46,6 +46,7 @@
   .dlg .hint { font-size: 12px; color: #888; margin: 4px 0 10px; }
   kbd { background: #eee; border-radius: 3px; padding: 0 4px; border: 1px solid #ddd; font-size: 12px; }
   #connBanner { display: none; background: #c62828; color: #fff; padding: 8px 16px; font-size: 13px; }
+  .failLink { color: #b3261e; text-decoration: underline; cursor: pointer; }
   #toastWrap { position: fixed; right: 16px; bottom: 70px; z-index: 99; display: flex; flex-direction: column; gap: 8px; }
   .toast { background: #323232; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 420px; white-space: pre-wrap; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
   .toast.err { background: #b3261e; }
@@ -77,7 +78,7 @@
   <span style="flex:1"></span>
   <span>点击缩略图 = 选为该组保留 · <kbd>←→</kbd>移动 <kbd>空格</kbd>选中 <kbd>回车</kbd>下一组</span>
   <button onclick="undoRename()">撤销上次重命名</button>
-  <button class="primary" onclick="doRename()">完成验收 → 原地重命名</button>
+  <button id="renameBtn" class="primary" onclick="doRename()">完成验收 → 原地重命名</button>
 </div>
 <div id="intro">
   <h2>三步整理一批照片</h2>
@@ -181,6 +182,14 @@ async function poll() {
 }
 setInterval(poll, 2000);
 
+function failSpan(p) {
+  return p.failed ? `<span class="failLink" onclick="showErrors()">失败 ${p.failed} 张 (点看原因)</span>` : "";
+}
+function showErrors() {
+  const errs = (D.project && D.project.failed_errors) || [];
+  if (!errs.length) { toast("没有失败详情 (可能是旧版本识别的)", true); return; }
+  toast("失败原因 (最常见的 " + errs.length + " 类):\n" + errs.map(e => e.n + "张: " + e.msg).join("\n"), true);
+}
 function render() {
   const s = D.settings || {}, p = D.project;
   // 进度区
@@ -191,10 +200,11 @@ function render() {
   if (scanning) { $("ptext").textContent = ptxt; $("pbar").style.width = pct + "%"; }
   $("stopBtn").style.display = D.tag ? "" : "none";
   const ready = p && p.tagged > 0 && D.groups && D.groups.length;
+  $("renameBtn").disabled = !ready;  // 没有已识别照片时禁止重命名, 防止误点报错
   $("main").style.display = ready ? "flex" : "none";
   $("intro").style.display = ready || scanning ? "none" : "block";
   $("footer").style.display = p ? "flex" : "none";
-  if (!ready) { if (p) $("stats").textContent = `已扫描 ${p.total} 张 · 已识别 ${p.tagged} 张 · 失败 ${p.failed} 张`; return; }
+  if (!ready) { if (p) $("stats").innerHTML = `已扫描 ${p.total} 张 · 已识别 ${p.tagged} 张` + (p.failed ? " · " + failSpan(p) : ""); return; }
   curG = Math.min(curG, D.groups.length - 1);
   // 组列表
   $("glist").innerHTML = D.groups.map((g, i) =>
@@ -209,8 +219,8 @@ function render() {
       <img loading="lazy" src="/thumb/${m.hash}.jpg" onerror="this.style.background='#ccc'">
       ${m.flags ? `<span class="badge" title="${m.flags}">${m.quality}分</span>` : `<span class="badge">${m.quality}分</span>`}
       <div class="meta">${m.filename}</div></div>`).join("");
-  $("stats").textContent = `共 ${D.groups.length} 组 ${p.tagged} 张 · 已选 ${D.groups.reduce((a, x) => a + x.members.filter(m => m.selected).length, 0)} 组` +
-    (p.cost ? ` · 已用 ¥${p.cost}` : "") + (p.failed ? ` · 失败 ${p.failed}` : "");
+  $("stats").innerHTML = `共 ${D.groups.length} 组 ${p.tagged} 张 · 已选 ${D.groups.reduce((a, x) => a + x.members.filter(m => m.selected).length, 0)} 组` +
+    (p.cost ? ` · 已用 ¥${p.cost}` : "") + (p.failed ? ` · ${failSpan(p)}` : "");
   document.title = `${curG + 1}/${D.groups.length} ${g.name} — PhotoCurator`;
 }
 
@@ -241,6 +251,10 @@ async function saveSettings() {
 }
 
 async function doRename() {
+  if (!D || !D.groups || !D.groups.length || !D.project) {
+    toast("还没有可重命名的照片: 请先完成识别, 再执行重命名", true);
+    return;
+  }
   const n = D.groups.length, total = D.project.tagged;
   if (!(await doConfirm(`将把 ${n} 个组共 ${total} 张照片在源文件夹内重命名:\n组内文件 → 组名_序号.扩展名, 每组选中 1 张加"_精选"标记。\n未选保留的组不会被标精选。此操作可用"撤销"一键还原。\n\n确认执行?`))) return;
   const r = await api("/api/rename", {});
@@ -248,6 +262,7 @@ async function doRename() {
   toast(`已重命名 ${r.renamed} 张` + (r.skipped.length ? `, 跳过 ${r.skipped.length} 张: ` + r.skipped.join("; ") : "") + `\n清单: ${r.manifest}`);
 }
 async function undoRename() {
+  if (!D || !D.project) { toast("请先打开照片文件夹", true); return; }
   if (!(await doConfirm("撤销上次重命名, 恢复全部原文件名?"))) return;
   const r = await api("/api/undo", {});
   poll();

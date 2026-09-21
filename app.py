@@ -327,6 +327,8 @@ def start_tagging(project_id):
         except Exception as e:
             db_exec("UPDATE photo SET status='failed', error=? WHERE id=?", (str(e)[:400], row["id"]))
             st["failed"] += 1
+            if st["failed"] >= 5 and st["failed"] == st["done"] + 1:
+                st["stop"] = True  # 熔断: 至今无一成功且已败 5 张, 大概率是 Key/地址/网络配置错误, 不再继续烧调用
         st["done"] += 1
 
     def run():
@@ -650,6 +652,10 @@ def state_payload():
                           "total": counts[0] or 0, "tagged": counts[1] or 0, "failed": counts[2] or 0,
                           "usage": usage, "cost": round(cost, 2),
                           "undo_available": bool(db_one("SELECT 1 FROM meta WHERE key=?", ("undo:" + folder,)))}
+        if counts[2]:  # 失败原因汇总: 最常见的最多 3 类, 供前端"失败 N 张 (点看原因)"展示
+            errs = db_all("SELECT error, COUNT(*) c FROM photo WHERE project_id=? AND status='failed' "
+                          "AND error IS NOT NULL GROUP BY error ORDER BY c DESC LIMIT 3", (pid,))
+            out["project"]["failed_errors"] = [{"n": r[1], "msg": (r[0] or "")[:160]} for r in errs]
         gran = cfg["granularity"]
         target = int(cfg["target_count"] or 0)
         if counts[1]:
