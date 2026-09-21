@@ -35,12 +35,15 @@
   .badge { position: absolute; right: 4px; top: 4px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }
   #footer { position: fixed; bottom: 0; left: 230px; right: 0; background: #fff; border-top: 1px solid #e5e5ea; padding: 10px 16px; display: flex; gap: 10px; align-items: center; font-size: 13px; color: #555; }
   #intro { max-width: 560px; margin: 80px auto; background: #fff; padding: 28px; border-radius: 10px; line-height: 1.9; }
-  dialog { border: none; border-radius: 10px; padding: 20px; width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
-  dialog h3 { margin-bottom: 12px; }
-  dialog .row { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-  dialog .row label { width: 130px; font-size: 13px; color: #555; flex-shrink: 0; }
-  dialog .row input, dialog .row select { flex: 1; }
-  dialog .hint { font-size: 12px; color: #888; margin: 4px 0 10px; }
+  /* 弹窗用普通 div 实现: 老款 Safari(<=15.3) 不支持 <dialog>/showModal, 会导致设置打不开 */
+  .dlg { display: none; position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 50; background: rgba(0,0,0,.35); }
+  .dlg .box { position: absolute; left: 50%; top: 90px; transform: translateX(-50%); width: 440px; max-width: calc(100vw - 40px);
+              background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  .dlg h3 { margin-bottom: 12px; }
+  .dlg .row { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .dlg .row label { width: 130px; font-size: 13px; color: #555; flex-shrink: 0; }
+  .dlg .row input, .dlg .row select { flex: 1; }
+  .dlg .hint { font-size: 12px; color: #888; margin: 4px 0 10px; }
   kbd { background: #eee; border-radius: 3px; padding: 0 4px; border: 1px solid #ddd; font-size: 12px; }
   #connBanner { display: none; background: #c62828; color: #fff; padding: 8px 16px; font-size: 13px; }
   #toastWrap { position: fixed; right: 16px; bottom: 70px; z-index: 99; display: flex; flex-direction: column; gap: 8px; }
@@ -68,7 +71,7 @@
     <h2 id="gtitle" style="font-size:15px; margin-bottom:10px"></h2>
     <div id="grid"></div>
   </section>
-</div>
+</main>
 <div id="footer" style="display:none">
   <span id="stats"></span>
   <span style="flex:1"></span>
@@ -83,12 +86,12 @@
      3. 逐组点击挑选每组的保留照片 → <b>原地重命名</b>(只改文件名, 可一键撤销)</p>
   <p style="color:#888">照片仅压缩后发送给你配置的模型 API; 分组结果与撤销记录保存在 ~/.photocurator/。</p>
 </div>
-<dialog id="confirmDlg">
+<div class="dlg" id="confirmDlg"><div class="box">
   <h3>请确认</h3>
   <p id="confirmMsg"></p>
-  <div style="text-align:right"><button onclick="confirmDlg.cancel()">取消</button> <button class="primary" onclick="confirmDlg.close('__ok')">确定</button></div>
-</dialog>
-<dialog id="settingsDlg">
+  <div style="text-align:right"><button onclick="closeDlg('confirmDlg')">取消</button> <button class="primary" onclick="closeDlg('confirmDlg','__ok')">确定</button></div>
+</div></div>
+<div class="dlg" id="settingsDlg"><div class="box">
   <h3>设置</h3>
   <div class="row"><label>API 地址</label><input type="text" id="s_base_url"></div>
   <div class="row"><label>模型名</label><input type="text" id="s_model"></div>
@@ -105,8 +108,8 @@
     </select></div>
   <div class="row"><label>期望组数(0=不限)</label><input type="number" id="s_target_count" min="0"></div>
   <p class="hint">切换粒度/组数即时生效, 不重新调用 API。</p>
-  <div style="text-align:right"><button onclick="settingsDlg.close()">取消</button> <button class="primary" onclick="saveSettings()">保存</button></div>
-</dialog>
+  <div style="text-align:right"><button onclick="closeDlg('settingsDlg')">取消</button> <button class="primary" onclick="saveSettings()">保存</button></div>
+</div></div>
 <script>
 let D = null, curG = 0, focusI = 0;
 const $ = id => document.getElementById(id);
@@ -127,12 +130,24 @@ function banner(msg) {
 window.addEventListener("error", e => banner("页面脚本错误: " + e.message + " (请截图反馈)"));
 window.addEventListener("unhandledrejection", e => banner("页面 promise 错误: " + e.reason + " (请截图反馈)"));
 
+// ---- 弹窗: 普通 div 模拟, 兼容不支持 <dialog> 的老 Safari ----
+function dlgOpen(id) { $(id).style.display = "block"; }
+function closeDlg(id, ret) {
+  const dlg = $(id);
+  dlg.style.display = "none";
+  dlg.returnValue = ret || "";
+  if (dlg._onclose) { const f = dlg._onclose; dlg._onclose = null; f(); }
+}
+function anyDlgOpen() {
+  return $("confirmDlg").style.display === "block" || $("settingsDlg").style.display === "block";
+}
 function doConfirm(msg) {
   return new Promise(resolve => {
     $("confirmMsg").textContent = msg;
     const dlg = $("confirmDlg");
-    dlg.onclose = () => resolve(dlg.returnValue === "__ok");
-    dlg.showModal();
+    dlg.returnValue = "";
+    dlg._onclose = () => resolve(dlg.returnValue === "__ok");
+    dlgOpen("confirmDlg");
   });
 }
 
@@ -204,16 +219,16 @@ async function pick(id) {
   poll();
 }
 
+function nz(v, d) { return v == null ? d : v; }  // 老浏览器无 ?? 运算符, 用函数代替
 function fillSettings() {
   const s = (D && D.settings) || {};  // D 未就绪时用默认值, 保证对话框总能打开
   $("s_base_url").value = s.base_url || "https://open.bigmodel.cn/api/paas/v4";
   $("s_model").value = s.model || "glm-5.3-flash";
   $("s_api_key").value = ""; $("s_api_key").placeholder = s.api_key ? "已保存 (留空则不修改)" : "sk-...";
-  $("s_concurrency").value = s.concurrency ?? 6; $("s_price_in").value = s.price_in ?? 0; $("s_price_out").value = s.price_out ?? 0;
-  $("s_granularity").value = s.granularity || "medium"; $("s_target_count").value = s.target_count ?? 0;
+  $("s_concurrency").value = nz(s.concurrency, 6); $("s_price_in").value = nz(s.price_in, 0); $("s_price_out").value = nz(s.price_out, 0);
+  $("s_granularity").value = s.granularity || "medium"; $("s_target_count").value = nz(s.target_count, 0);
 }
-const settingsDlg = $("settingsDlg");
-function openSettings() { fillSettings(); settingsDlg.showModal(); }
+function openSettings() { fillSettings(); dlgOpen("settingsDlg"); }
 async function saveSettings() {
   const body = {base_url: $("s_base_url").value.trim(), model: $("s_model").value.trim(),
     concurrency: +$("s_concurrency").value, price_in: +$("s_price_in").value, price_out: +$("s_price_out").value,
@@ -221,7 +236,7 @@ async function saveSettings() {
   if ($("s_api_key").value.trim()) body.api_key = $("s_api_key").value.trim();
   await api("/api/settings", body);
   await poll();
-  settingsDlg.close();
+  closeDlg("settingsDlg");
   toast("设置已保存");
 }
 
@@ -240,7 +255,8 @@ async function undoRename() {
 }
 
 document.addEventListener("keydown", e => {
-  if (!D || !D.groups || !D.groups.length || settingsDlg.open || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  if (e.key === "Escape" && anyDlgOpen()) { closeDlg($("confirmDlg").style.display === "block" ? "confirmDlg" : "settingsDlg"); return; }
+  if (!D || !D.groups || !D.groups.length || anyDlgOpen() || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
   const g = D.groups[curG];
   if (e.key === "ArrowRight" || e.key === "ArrowDown") { focusI = Math.min(focusI + 1, g.members.length - 1); highlight(); }
   else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { focusI = Math.max(focusI - 1, 0); highlight(); }

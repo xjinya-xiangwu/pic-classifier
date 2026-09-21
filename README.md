@@ -37,6 +37,8 @@ Windows 调试环境用 `run.bat`。
 | --- | --- | --- |
 | 「无法执行，因为没有正确的访问权限」 | 从 Windows/微信传来的文件丢失可执行位 | 用上面 `bash run.command` 方式运行；或 `chmod +x run.command` 后双击 |
 | 「无法验证开发者 / 已损坏」 | macOS 隔离标记（网络下载） | 系统设置 → 隐私与安全性 → 点「仍要打开」；或终端执行 `xattr -dr com.apple.quarantine .`（在本目录下） |
+| 安装最后出现 `_LSOpenURLsWithCompletionHandler() failed with error -600`，浏览器没自动打开 | 老系统上刚生成的 App 未及时注册进 LaunchServices（旧版安装器缺陷，v1.1 起已改为直接拉起服务，不再经过 `open`） | 重新执行安装命令升级；或手动双击 App，浏览器访问 `http://127.0.0.1:8765` |
+| 页面能打开，但所有按钮点了都没反应、设置打不开 | 旧版前端用了老款 Safari（≤15.3）不支持的 `<dialog>`/`??` 语法，脚本整体失效（已修复） | 重新执行安装命令升级后再试；若仍异常，页面顶部会出现红色错误横幅，请截图反馈 |
 | 首次扫描时询问「"python"想要访问文件夹」 | macOS 访问控制 | 点「允许」 |
 | 报错含 `$'\r': command not found` | 文件被转成 Windows 换行符 | 重新 `git clone` 本仓库获取正确版本，不要用微信传文件 |
 

@@ -13,14 +13,18 @@ import base64
 import csv
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
+import socket
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -187,6 +191,23 @@ def scan_folder(folder: Path, recursive: bool, project_id: int):
 
 
 # ---------------------------------------------------------------- 模型识别
+def check_public_http_url(url: str):
+    """SSRF 防护: 仅允许 http/https 公网地址, 拒绝环回/私有/链路本地/保留地址 (含 DNS 解析后复核)。"""
+    sp = urllib.parse.urlparse(url)
+    if sp.scheme not in ("http", "https") or not sp.hostname:
+        raise ValueError(f"API 地址不合法 (仅允许 http/https): {url}")
+    port = sp.port or (443 if sp.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(sp.hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise ValueError(f"API 地址无法解析: {sp.hostname} ({e})")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved \
+                or ip.is_multicast or ip.is_unspecified:
+            raise ValueError(f"API 地址指向内网/保留地址, 已拒绝: {sp.hostname} -> {ip}")
+
+
 def vlm_tag(jpeg_bytes: bytes, cfg: dict) -> dict:
     """调用 OpenAI 兼容视觉接口, 返回校验后的标签 dict。失败抛异常。cfg 可含 _folder 用于成本归集。"""
     b64 = base64.b64encode(jpeg_bytes).decode()
@@ -201,6 +222,7 @@ def vlm_tag(jpeg_bytes: bytes, cfg: dict) -> dict:
         ],
     }
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    check_public_http_url(url)
     last_err = None
     for attempt in range(5):  # 429/超时/5xx 指数退避
         try:
@@ -431,11 +453,12 @@ def apply_renames(project_id):
         db_exec("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)",
                 ("undo:" + str(folder), json.dumps(undo, ensure_ascii=False)))
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = APP_DIR / f"manifest_{folder.name}_{ts}.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
-        w.writerow(["新文件名", "组", "原文件名", "原路径", "是否精选", "质量分"])
-        w.writerows(manifest)
+    csv_path = APP_DIR / ("manifest_p%d_%s.csv" % (int(project_id), ts))  # int 强转: 文件名只可能由数字/时间戳构成
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["新文件名", "组", "原文件名", "原路径", "是否精选", "质量分"])
+    w.writerows(manifest)
+    csv_path.write_text(buf.getvalue(), encoding="utf-8-sig")
     return {"renamed": renamed, "skipped": skipped, "undo_available": bool(undo), "manifest": str(csv_path)}
 
 
@@ -463,6 +486,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _guard(self):
+        """只服务本机: 防 DNS rebinding 与恶意网页跨站驱动本地 API (CSRF)。
+        - Host 必须是 127.0.0.1/localhost, 网页通过 rebinding 域名访问时会被拒;
+        - 浏览器发出的跨站 POST 带 Origin 头, 与本站不符即拒; curl/本机调用无 Origin, 不受影响。"""
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        if host not in ("127.0.0.1", "localhost"):
+            self._json({"error": "forbidden"}, 403)
+            return False
+        origin = self.headers.get("Origin")
+        if origin:
+            port = self.server.server_address[1]
+            if origin.rstrip("/") not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+                self._json({"error": "forbidden origin"}, 403)
+                return False
+        return True
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
@@ -475,6 +514,17 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
     def do_GET(self):
+        try:
+            if not self._guard():
+                return
+            self._get()
+        except Exception as e:
+            try:
+                self._json({"error": str(e)}, 500)
+            except Exception:
+                pass  # 响应已发出/连接已断, 只能放弃
+
+    def _get(self):
         if self.path == "/" or self.path.startswith("/index"):
             return self._file(Path(__file__).parent / "index.html", "text/html; charset=utf-8")
         m = re.match(r"^/thumb/([0-9a-f]+)\.jpg$", self.path)
@@ -490,6 +540,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if not self._guard():
+                return
             body = self._body()
             pid = current_project_id()
             if self.path == "/api/settings":
@@ -535,7 +587,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(undo_renames(pid))
             self._json({"error": "not found"}, 404)
         except Exception as e:
-            self._json({"error": str(e)}, 500)
+            try:
+                self._json({"error": str(e)}, 500)
+            except Exception:
+                pass
 
     def _file(self, f: Path, ctype, cache=False):
         if not f.exists():
@@ -605,6 +660,30 @@ def state_payload():
 
 
 # ---------------------------------------------------------------- 入口
+def open_browser(url):
+    # macOS 上 /usr/bin/open 走 LaunchServices, 比默认 webbrowser 的 osascript 更可靠
+    # (双击 .app 启动时环境精简, webbrowser 可能静默失败导致"页面打不开")
+    if sys.platform == "darwin":
+        try:
+            subprocess.run(["open", url], check=False, timeout=5)
+            return
+        except Exception:
+            pass
+    webbrowser.open(url)
+
+
+def probe_existing_port():
+    """已有 PhotoCurator 实例在运行时返回其端口, 否则 None。"""
+    for p in range(8765, 8776):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/state", timeout=0.5) as resp:
+                if resp.status == 200 and b"settings" in resp.read():
+                    return p
+        except Exception:
+            pass
+    return None
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "undo":
         init_db(APP_DIR / "photocurator.db")
@@ -622,6 +701,12 @@ def main():
         print(json.dumps(vlm_tag(buf.getvalue(), cfg), ensure_ascii=False, indent=2))
         return
     init_db(APP_DIR / "photocurator.db")
+    old = probe_existing_port()
+    if old:
+        url = f"http://127.0.0.1:{old}"
+        print(f"PhotoCurator 已在运行: {url}  (直接打开页面, 不重复启动)", flush=True)
+        threading.Timer(0.3, lambda: open_browser(url)).start()
+        return
     port = 8765
     for p in range(8765, 8776):
         try:
@@ -631,9 +716,9 @@ def main():
         except OSError:
             continue
     url = f"http://127.0.0.1:{port}"
-    print(f"PhotoCurator 运行中: {url}  (Ctrl+C 退出)")
-    print(f"数据目录: {APP_DIR}")
-    threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    print(f"PhotoCurator 运行中: {url}  (Ctrl+C 退出)", flush=True)
+    print(f"数据目录: {APP_DIR}", flush=True)
+    threading.Timer(0.8, lambda: open_browser(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
