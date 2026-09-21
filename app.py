@@ -496,7 +496,10 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = save_settings(body)
                 return self._json({"ok": True, "settings": {k: cfg[k] for k in DEFAULTS}})
             if self.path == "/api/open":
-                folder = Path(body["folder"]).expanduser().resolve()
+                folder = Path(body.get("folder", "").strip()).expanduser()
+                if not str(folder):
+                    return self._json({"error": "请先输入照片文件夹路径"}, 400)
+                folder = folder.resolve()
                 if not folder.is_dir():
                     return self._json({"error": f"目录不存在: {folder}"}, 400)
                 cur = db_one("SELECT id FROM project WHERE folder=?", (str(folder),))

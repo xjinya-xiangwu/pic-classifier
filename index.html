@@ -42,6 +42,11 @@
   dialog .row input, dialog .row select { flex: 1; }
   dialog .hint { font-size: 12px; color: #888; margin: 4px 0 10px; }
   kbd { background: #eee; border-radius: 3px; padding: 0 4px; border: 1px solid #ddd; font-size: 12px; }
+  #connBanner { display: none; background: #c62828; color: #fff; padding: 8px 16px; font-size: 13px; }
+  #toastWrap { position: fixed; right: 16px; bottom: 70px; z-index: 99; display: flex; flex-direction: column; gap: 8px; }
+  .toast { background: #323232; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 420px; white-space: pre-wrap; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+  .toast.err { background: #b3261e; }
+  #confirmDlg p { margin: 12px 0 18px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -54,6 +59,8 @@
   <button onclick="stopTag()" id="stopBtn" style="display:none">暂停</button>
   <button onclick="openSettings()">设置</button>
 </header>
+<div id="connBanner"></div>
+<div id="toastWrap"></div>
 <div id="progress" style="display:none"><span id="ptext"></span><div class="bar"><i id="pbar"></i></div></div>
 <main id="main" style="display:none">
   <aside id="glist"></aside>
@@ -76,6 +83,11 @@
      3. 逐组点击挑选每组的保留照片 → <b>原地重命名</b>(只改文件名, 可一键撤销)</p>
   <p style="color:#888">照片仅压缩后发送给你配置的模型 API; 分组结果与撤销记录保存在 ~/.photocurator/。</p>
 </div>
+<dialog id="confirmDlg">
+  <h3>请确认</h3>
+  <p id="confirmMsg"></p>
+  <div style="text-align:right"><button onclick="confirmDlg.cancel()">取消</button> <button class="primary" onclick="confirmDlg.close('__ok')">确定</button></div>
+</dialog>
 <dialog id="settingsDlg">
   <h3>设置</h3>
   <div class="row"><label>API 地址</label><input type="text" id="s_base_url"></div>
@@ -99,18 +111,57 @@
 let D = null, curG = 0, focusI = 0;
 const $ = id => document.getElementById(id);
 
+// ---- 可见化反馈: 页内 toast + 连接状态横幅 (替代被浏览器屏蔽的 alert/confirm) ----
+function toast(msg, isErr) {
+  const t = document.createElement("div");
+  t.className = "toast" + (isErr ? " err" : "");
+  t.textContent = msg;
+  $("toastWrap").appendChild(t);
+  setTimeout(() => t.remove(), isErr ? 8000 : 5000);
+}
+function banner(msg) {
+  const b = $("connBanner");
+  if (msg) { b.textContent = msg; b.style.display = "block"; }
+  else b.style.display = "none";
+}
+window.addEventListener("error", e => banner("页面脚本错误: " + e.message + " (请截图反馈)"));
+window.addEventListener("unhandledrejection", e => banner("页面 promise 错误: " + e.reason + " (请截图反馈)"));
+
+function doConfirm(msg) {
+  return new Promise(resolve => {
+    $("confirmMsg").textContent = msg;
+    const dlg = $("confirmDlg");
+    dlg.onclose = () => resolve(dlg.returnValue === "__ok");
+    dlg.showModal();
+  });
+}
+
 async function api(path, body) {
-  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : undefined);
+  let r;
+  try {
+    r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : undefined);
+  } catch (e) {
+    banner("无法连接本地服务——PhotoCurator 可能未运行, 请重新打开 App。当前操作未执行。");
+    throw new Error("connection failed");
+  }
   const j = await r.json();
-  if (j.error) { alert(j.error); throw new Error(j.error); }
+  if (j.error) { toast("操作失败: " + j.error, true); throw new Error(j.error); }
   return j;
 }
-function openFolder() { api("/api/open", {folder: $("folder").value.trim(), recursive: $("recursive").checked}); poll(); }
-function startTag() { api("/api/tag", {}); poll(); }
+function openFolder() {
+  const f = $("folder").value.trim();
+  if (!f) { toast("请先输入照片文件夹路径", true); return; }
+  api("/api/open", {folder: f, recursive: $("recursive").checked}).then(poll).catch(() => {});
+}
+function startTag() { api("/api/tag", {}).then(poll).catch(() => {}); }
 function stopTag() { fetch("/api/tag/stop", {method: "POST"}); }
 
 async function poll() {
-  try { D = await (await fetch("/api/state")).json(); } catch (e) { return; }
+  let j;
+  try { j = await (await fetch("/api/state")).json(); }
+  catch (e) { banner("无法连接本地服务——PhotoCurator 可能未运行, 请重新打开 App。"); return; }
+  banner("");
+  D = j;
   render();
 }
 setInterval(poll, 2000);
@@ -149,20 +200,20 @@ function render() {
 }
 
 async function pick(id) {
-  await api("/api/select", {id});
+  await api("/api/select", {id}).catch(() => {});
   poll();
 }
 
 function fillSettings() {
-  const s = D.settings;
-  $("s_base_url").value = s.base_url; $("s_model").value = s.model;
+  const s = (D && D.settings) || {};  // D 未就绪时用默认值, 保证对话框总能打开
+  $("s_base_url").value = s.base_url || "https://open.bigmodel.cn/api/paas/v4";
+  $("s_model").value = s.model || "glm-5.3-flash";
   $("s_api_key").value = ""; $("s_api_key").placeholder = s.api_key ? "已保存 (留空则不修改)" : "sk-...";
-  $("s_concurrency").value = s.concurrency; $("s_price_in").value = s.price_in; $("s_price_out").value = s.price_out;
-  $("s_granularity").value = s.granularity; $("s_target_count").value = s.target_count;
+  $("s_concurrency").value = s.concurrency ?? 6; $("s_price_in").value = s.price_in ?? 0; $("s_price_out").value = s.price_out ?? 0;
+  $("s_granularity").value = s.granularity || "medium"; $("s_target_count").value = s.target_count ?? 0;
 }
 const settingsDlg = $("settingsDlg");
 function openSettings() { fillSettings(); settingsDlg.showModal(); }
-settingsDlg.addEventListener("open", fillSettings);
 async function saveSettings() {
   const body = {base_url: $("s_base_url").value.trim(), model: $("s_model").value.trim(),
     concurrency: +$("s_concurrency").value, price_in: +$("s_price_in").value, price_out: +$("s_price_out").value,
@@ -171,20 +222,21 @@ async function saveSettings() {
   await api("/api/settings", body);
   await poll();
   settingsDlg.close();
+  toast("设置已保存");
 }
 
 async function doRename() {
   const n = D.groups.length, total = D.project.tagged;
-  if (!confirm(`将把 ${n} 个组共 ${total} 张照片在源文件夹内重命名:\n组内文件 → 组名_序号.扩展名, 每组选中 1 张加"_精选"标记。\n未选保留的组不会被标精选。此操作可用"撤销"一键还原。\n\n确认执行?`)) return;
+  if (!(await doConfirm(`将把 ${n} 个组共 ${total} 张照片在源文件夹内重命名:\n组内文件 → 组名_序号.扩展名, 每组选中 1 张加"_精选"标记。\n未选保留的组不会被标精选。此操作可用"撤销"一键还原。\n\n确认执行?`))) return;
   const r = await api("/api/rename", {});
   poll();
-  alert(`已重命名 ${r.renamed} 张` + (r.skipped.length ? `, 跳过 ${r.skipped.length} 张:\n` + r.skipped.join("\n") : "") + `\n清单: ${r.manifest}`);
+  toast(`已重命名 ${r.renamed} 张` + (r.skipped.length ? `, 跳过 ${r.skipped.length} 张: ` + r.skipped.join("; ") : "") + `\n清单: ${r.manifest}`);
 }
 async function undoRename() {
-  if (!confirm("撤销上次重命名, 恢复全部原文件名?")) return;
+  if (!(await doConfirm("撤销上次重命名, 恢复全部原文件名?"))) return;
   const r = await api("/api/undo", {});
   poll();
-  alert(`已还原 ${r.restored} 个文件名`);
+  toast(`已还原 ${r.restored} 个文件名`);
 }
 
 document.addEventListener("keydown", e => {
