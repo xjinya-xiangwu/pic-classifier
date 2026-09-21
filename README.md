@@ -4,17 +4,30 @@
 
 ## 安装与运行（macOS）
 
-**首次准备（约 10 分钟）**
+**最简方式（推荐）**：打开「终端」（启动台搜索"终端"），粘贴这一行并回车：
 
-1. 浏览器打开 https://github.com/xjinya-xiangwu/pic-classifier → 绿色 Code 按钮 → Download ZIP → 解压（建议拖到「桌面」或「文稿」）。
-2. 打开「终端」（启动台搜索"终端"），输入 `bash `（末尾有空格），把 `run.command` 拖进终端窗口，回车。
-3. 若弹出「需要安装命令行开发者工具」→ 点「安装」，等装完（几分钟）后再执行一次第 2 步。
-4. 等待自动创建虚拟环境并安装依赖（首次几分钟），浏览器会自动打开 App 界面。
-5. 设置 → API Key 填 boyue 中转站的 Key（sk- 开头）；API 地址 `http://35.220.164.252:3888/v1`、模型 `glm-5.3-flash` 已内置。**Key 按机器保存，每台 Mac 都要填一次。**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/xjinya-xiangwu/pic-classifier/main/install_mac.sh)
+```
 
-**日常使用**：以后双击 `run.command` 即可（第一次建议先在终端执行一次 `chmod +x ` + 拖入 run.command 回车，永久修复双击权限）。关闭 App：终端按 Ctrl+C 或直接关终端窗口。
+自动完成：下载代码到 `~/PhotoCurator` → 安装依赖 → 在**应用程序**里生成 PhotoCurator.app → 启动并打开浏览器。以后在**启动台双击 PhotoCurator** 即可，不再需要终端。
+
+> 若 `raw.githubusercontent.com` 打不开（网络原因）：在浏览器打开仓库里的 `install_mac.sh` → 原始内容 → 另存为 `install_mac.sh`，然后终端执行 `bash ` 拖入该文件回车，效果相同。
+
+**首次准备**：安装过程中若弹出「命令行开发者工具」安装窗口，点**安装**等 2-5 分钟，脚本会自动继续；装好后在 App「设置」里填 boyue 中转站的 API Key（sk- 开头，每台 Mac 填一次）。
+
+<details>
+<summary>老方法：手动下载 ZIP + 终端运行（备选）</summary>
+
+1. 仓库页 → Code → Download ZIP → 解压。
+2. 终端输入 `bash `（末尾有空格），把 `run.command` 拖进窗口，回车。
+3. 双击运行需先修复执行权限：`chmod +x ` 拖入 `run.command` 回车。
+
+</details>
 
 **小技巧**：扫描时需要填照片文件夹路径——在 Finder 里选中该文件夹按 `Cmd+Option+C` 复制"路径名称"，再到 App 里粘贴。
+
+关闭 App：点击 PhotoCurator 窗口/浏览器标签即可（后台服务随其退出；或在活动监视器结束 python）。升级版本：重新执行安装命令。
 
 Windows 调试环境用 `run.bat`。
 
