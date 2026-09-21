@@ -47,6 +47,8 @@
   kbd { background: #eee; border-radius: 3px; padding: 0 4px; border: 1px solid #ddd; font-size: 12px; }
   #connBanner { display: none; background: #c62828; color: #fff; padding: 8px 16px; font-size: 13px; }
   .failLink { color: #b3261e; text-decoration: underline; cursor: pointer; }
+  #apiStatus.ok { color: #0a9e4a; }
+  #apiStatus.err { color: #b3261e; }
   #toastWrap { position: fixed; right: 16px; bottom: 70px; z-index: 99; display: flex; flex-direction: column; gap: 8px; }
   .toast { background: #323232; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 420px; white-space: pre-wrap; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
   .toast.err { background: #b3261e; }
@@ -109,6 +111,7 @@
     </select></div>
   <div class="row"><label>期望组数(0=不限)</label><input type="number" id="s_target_count" min="0"></div>
   <p class="hint">切换粒度/组数即时生效, 不重新调用 API。</p>
+  <p id="apiStatus" class="hint">填写 API 地址 / 模型名 / Key 后将自动测试连通性</p>
   <div style="text-align:right"><button onclick="closeDlg('settingsDlg')">取消</button> <button class="primary" onclick="saveSettings()">保存</button></div>
 </div></div>
 <script>
@@ -238,7 +241,47 @@ function fillSettings() {
   $("s_concurrency").value = nz(s.concurrency, 6); $("s_price_in").value = nz(s.price_in, 0); $("s_price_out").value = nz(s.price_out, 0);
   $("s_granularity").value = s.granularity || "medium"; $("s_target_count").value = nz(s.target_count, 0);
 }
-function openSettings() { fillSettings(); dlgOpen("settingsDlg"); }
+function openSettings() { fillSettings(); dlgOpen("settingsDlg"); scheduleApiCheck(); }
+
+// ---- API 连通性自动检测: 三个参数任一变化后防抖实测一次, 状态显示在表单下方 ----
+let apiCheckTimer = null, lastApiSig = "#never";
+function readApiForm() {
+  return {base_url: $("s_base_url").value.trim(), model: $("s_model").value.trim(), api_key: $("s_api_key").value.trim()};
+}
+function apiSig(s) { return s.base_url + "|" + s.model + "|" + (s.api_key || "(saved)"); }
+function apiStatusShow(text, cls) { const el = $("apiStatus"); el.textContent = text; el.className = "hint " + (cls || ""); }
+function scheduleApiCheck() {
+  const s = readApiForm(), sig = apiSig(s);
+  if (sig === lastApiSig) return;  // 配置没变不重复检测
+  clearTimeout(apiCheckTimer);
+  const savedKeyExists = D && D.settings && D.settings.api_key;
+  if (!s.base_url || !s.model || (!s.api_key && !savedKeyExists)) {
+    lastApiSig = "";
+    apiStatusShow("填写 API 地址 / 模型名 / Key 后将自动测试连通性", "");
+    return;
+  }
+  apiStatusShow("正在测试 API 连通性… (用一张小图实测, 几秒出结果)", "");
+  lastApiSig = sig;
+  apiCheckTimer = setTimeout(runApiCheck, 900, sig);
+}
+async function runApiCheck(sig) {
+  const s = readApiForm();
+  const body = {base_url: s.base_url, model: s.model};
+  if (s.api_key) body.api_key = s.api_key;
+  try {
+    const r = await api("/api/check-api", body);
+    if (apiSig(readApiForm()) !== sig) return;  // 检测期间用户又改了配置, 过期结果不覆盖
+    if (r.ok) apiStatusShow("✓ " + r.msg, "ok");
+    else apiStatusShow("✗ " + r.msg, "err");
+  } catch (e) {
+    if (apiSig(readApiForm()) !== sig) return;
+    apiStatusShow("✗ 本地服务未响应, 无法测试", "err");
+  }
+}
+["s_base_url", "s_model", "s_api_key"].forEach(id => {
+  $(id).addEventListener("input", scheduleApiCheck);
+  $(id).addEventListener("change", scheduleApiCheck);
+});
 async function saveSettings() {
   const body = {base_url: $("s_base_url").value.trim(), model: $("s_model").value.trim(),
     concurrency: +$("s_concurrency").value, price_in: +$("s_price_in").value, price_out: +$("s_price_out").value,

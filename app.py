@@ -264,6 +264,63 @@ def validate_tag(t: dict) -> dict:
     }
 
 
+def check_api_from_payload(payload: dict) -> dict:
+    """设置页连通性检测入口: base_url/model 必填, api_key 留空回退已保存 Key (与保存行为一致)。"""
+    cfg_in = {k: (payload.get(k) or "").strip() for k in ("base_url", "model", "api_key")}
+    if not cfg_in["base_url"] or not cfg_in["model"]:
+        return {"ok": False, "msg": "请先填写 API 地址和模型名"}
+    if not cfg_in["api_key"]:
+        cfg_in["api_key"] = get_setting("api_key")
+    if not cfg_in["api_key"]:
+        return {"ok": False, "msg": "请先填写 API Key"}
+    return test_api(cfg_in)
+
+
+def test_api(cfg: dict) -> dict:
+    """用一张 64px 小图实测一次 chat/completions, 返回 {ok, msg}。单次调用不重试, 30s 超时, 供设置页连通性检测。"""
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    try:
+        check_public_http_url(url)
+    except ValueError as e:
+        return {"ok": False, "msg": str(e)}
+    img = Image.new("RGB", (64, 96), (235, 235, 235))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    body = {
+        "model": cfg["model"], "temperature": 0,
+        "messages": [
+            {"role": "system", "content": PROMPT},
+            {"role": "user", "content": [
+                {"type": "image_url",
+                 "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}},
+                {"type": "text", "text": "标注这张照片。"}]},
+        ],
+    }
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Authorization": "Bearer " + cfg["api_key"],
+                                          "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        content = data["choices"][0]["message"]["content"]
+        validate_tag(json.loads(content[content.index("{"): content.rindex("}") + 1]))
+        model = data.get("model") or cfg["model"]
+        return {"ok": True, "msg": f"连接成功, 模型 {model} 已正常返回标注"}
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode(errors="ignore")[:200]
+        except Exception:
+            pass
+        hint = {401: "Key 无效或未授权", 403: "Key 无权限",
+                404: "API 地址不对 (base_url 应到 /v4、/v1 这一级)", 429: "被限流或账户欠费"}.get(e.code, f"HTTP {e.code}")
+        return {"ok": False, "msg": f"{hint}: {detail}" if detail else hint}
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        return {"ok": False, "msg": f"返回内容无法解析为标注 JSON ({str(e)[:120]}), 该地址/模型可能不是 OpenAI 兼容的视觉接口"}
+    except Exception as e:
+        return {"ok": False, "msg": f"连接失败: {str(e)[:200]}"}
+
+
 def add_usage(folder: str, pt: int, ct: int):
     key = "usage:" + folder
     with DB_LOCK:
@@ -549,6 +606,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/settings":
                 cfg = save_settings(body)
                 return self._json({"ok": True, "settings": {k: cfg[k] for k in DEFAULTS}})
+            if self.path == "/api/check-api":
+                return self._json(check_api_from_payload(body))
             if self.path == "/api/open":
                 folder = Path(body.get("folder", "").strip()).expanduser()
                 if not str(folder):
