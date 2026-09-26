@@ -188,6 +188,9 @@ setInterval(poll, 2000);
 function failSpan(p) {
   return p.failed ? `<span class="failLink" onclick="showErrors()">失败 ${p.failed} 张 (点看原因)</span>` : "";
 }
+function esc(s) {  // 文件名等外部输入进 innerHTML 前转义 (macOS 允许 <>&" 出现在文件名里)
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 function showErrors() {
   const errs = (D.project && D.project.failed_errors) || [];
   if (!errs.length) { toast("没有失败详情 (可能是旧版本识别的)", true); return; }
@@ -212,7 +215,7 @@ function render() {
   // 组列表
   $("glist").innerHTML = D.groups.map((g, i) =>
     `<div class="g ${i === curG ? "cur" : ""}" onclick="curG=${i};focusI=0;render()">
-      <span>${g.name}</span><span>${g.n}张 ${g.members.some(m => m.selected) ? '<span class="done">✓</span>' : ""}</span></div>`).join("")
+      <span>${esc(g.name)}</span><span>${g.n}张 ${g.members.some(m => m.selected) ? '<span class="done">✓</span>' : ""}</span></div>`).join("")
     + (D.ungrouped ? `<div class="g" style="color:#999"><span>未识别/失败</span><span>${D.ungrouped}张</span></div>` : "");
   // 当前组网格
   const g = D.groups[curG];
@@ -220,8 +223,8 @@ function render() {
   $("grid").innerHTML = g.members.map((m, i) =>
     `<div class="card ${m.selected ? "sel" : ""} ${i === 0 ? "reco" : ""}" onclick="pick(${m.id})">
       <img loading="lazy" src="/thumb/${m.hash}.jpg" onerror="this.style.background='#ccc'">
-      ${m.flags ? `<span class="badge" title="${m.flags}">${m.quality}分</span>` : `<span class="badge">${m.quality}分</span>`}
-      <div class="meta">${m.filename}</div></div>`).join("");
+      ${m.flags ? `<span class="badge" title="${esc(m.flags)}">${m.quality}分</span>` : `<span class="badge">${m.quality}分</span>`}
+      <div class="meta">${esc(m.filename)}</div></div>`).join("");
   $("stats").innerHTML = `共 ${D.groups.length} 组 ${p.tagged} 张 · 已选 ${D.groups.reduce((a, x) => a + x.members.filter(m => m.selected).length, 0)} 组` +
     (p.cost ? ` · 已用 ¥${p.cost}` : "") + (p.failed ? ` · ${failSpan(p)}` : "");
   document.title = `${curG + 1}/${D.groups.length} ${g.name} — PhotoCurator`;
@@ -275,7 +278,8 @@ async function runApiCheck(sig) {
     else apiStatusShow("✗ " + r.msg, "err");
   } catch (e) {
     if (apiSig(readApiForm()) !== sig) return;
-    apiStatusShow("✗ 本地服务未响应, 无法测试", "err");
+    // 区分"本地服务没连上"与"服务返回了错误": api() 已把服务端 error 弹为 toast 并 throw
+    apiStatusShow(e && e.message === "connection failed" ? "✗ 本地服务未响应, 无法测试" : "✗ 检测未完成 (详见右上角提示)", "err");
   }
 }
 ["s_base_url", "s_model", "s_api_key"].forEach(id => {

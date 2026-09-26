@@ -132,8 +132,43 @@ assert not r["ok"] and "API 地址" in r["msg"], f"缺地址应提示, 实得 {r
 pc.check_public_http_url = _real_check
 print("OK API 检测: 成功 / 环回拒绝 / 401 提示 / Key 回退 / 缺参数提示 全部通过")
 
+# --- 防护回归: Host/Origin 守卫 403 + 实例探测 + settings 响应 Key 掩码 ---
+import http.client
+
+srv2 = ThreadingHTTPServer((LOOPBACK, 8765), pc.Handler)  # probe 只扫 8765-8775
+threading.Thread(target=srv2.serve_forever, daemon=True).start()
+
+
+def _post(path, payload, origin=None, host=None):
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Origin"] = origin
+    if host:
+        headers["Host"] = host
+    conn = http.client.HTTPConnection(LOOPBACK, 8765, timeout=10)  # 只打本机 mock 服务
+    conn.request("POST", path, json.dumps(payload), headers)
+    resp = conn.getresponse()
+    code, body = resp.status, json.loads(resp.read())
+    conn.close()
+    return code, body
+
+
+code, _ = _post("/api/check-api", {"base_url": MOCK_URL, "model": "m"}, origin="http://evil.com")
+assert code == 403, f"跨站 Origin 应 403, 实得 {code}"
+code, _ = _post("/api/check-api", {"base_url": MOCK_URL, "model": "m"}, host="evil.com")
+assert code == 403, f"rebinding Host 应 403, 实得 {code}"
+code, body = _post("/api/settings", {"api_key": "sk-" + "x"})
+assert code == 200 and body["settings"]["api_key"] == "***", f"settings 响应 Key 应掩码, 实得 {body}"
+conn = http.client.HTTPConnection(LOOPBACK, 8765, timeout=10)
+conn.request("GET", "/api/state")
+assert b"settings" in conn.getresponse().read()
+conn.close()
+assert pc.probe_existing_port() == 8765, "实例探测应发现 8765 上的运行实例"
+srv2.shutdown()
+print("OK 防护回归: Origin/Host 403 / settings Key 掩码 / probe 实例探测 全部通过")
+
 pc._conn.close()
 mock.shutdown()
 mock401.shutdown()
 shutil.rmtree(tmp, ignore_errors=True)
-print("OK e2e 全部通过 (成功路径 / 熔断 / 失败原因下发 / API 检测)")
+print("OK e2e 全部通过 (成功路径 / 熔断 / 失败原因下发 / API 检测 / 防护回归)")

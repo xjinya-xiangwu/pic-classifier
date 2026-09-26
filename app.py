@@ -367,7 +367,7 @@ def start_tagging(project_id):
     with STATE_LOCK:
         if STATE["tag"]:
             return
-        st = {"done": 0, "total": 0, "failed": 0, "stop": False}
+        st = {"done": 0, "total": 0, "failed": 0, "ok": 0, "stop": False}
         STATE["tag"] = st
     db_exec("UPDATE photo SET status='scanned' WHERE project_id=? AND status='tagging'", (project_id,))
     rows = db_all("SELECT id, path, content_hash FROM photo WHERE project_id=? AND status IN ('scanned','failed') "
@@ -381,10 +381,11 @@ def start_tagging(project_id):
         db_exec("UPDATE photo SET status='tagging' WHERE id=?", (row["id"],))
         try:
             tag_one(row, cfg, project_id)
+            st["ok"] += 1  # 显式成功计数: 熔断条件"至今无一成功"比用 done-failed 推算更稳
         except Exception as e:
             db_exec("UPDATE photo SET status='failed', error=? WHERE id=?", (str(e)[:400], row["id"]))
             st["failed"] += 1
-            if st["failed"] >= 5 and st["failed"] == st["done"] + 1:
+            if st["failed"] >= 5 and st["ok"] == 0:
                 st["stop"] = True  # 熔断: 至今无一成功且已败 5 张, 大概率是 Key/地址/网络配置错误, 不再继续烧调用
         st["done"] += 1
 
@@ -605,7 +606,10 @@ class Handler(BaseHTTPRequestHandler):
             pid = current_project_id()
             if self.path == "/api/settings":
                 cfg = save_settings(body)
-                return self._json({"ok": True, "settings": {k: cfg[k] for k in DEFAULTS}})
+                # api_key 掩码回显 (与 /api/state 一致), 防止保存响应里明文泄露 Key
+                return self._json({"ok": True,
+                                   "settings": {k: ("***" if k == "api_key" and cfg[k] else cfg[k])
+                                                for k in DEFAULTS}})
             if self.path == "/api/check-api":
                 return self._json(check_api_from_payload(body))
             if self.path == "/api/open":
@@ -784,6 +788,8 @@ def main():
             break
         except OSError:
             continue
+    else:
+        sys.exit("8765-8775 端口全部被占用, 无法启动 (可用活动监视器结束旧的 python 进程后重试)")
     url = f"http://127.0.0.1:{port}"
     print(f"PhotoCurator 运行中: {url}  (Ctrl+C 退出)", flush=True)
     print(f"数据目录: {APP_DIR}", flush=True)
