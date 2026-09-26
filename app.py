@@ -737,11 +737,15 @@ def open_browser(url):
     webbrowser.open(url)
 
 
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def probe_existing_port():
     """已有 PhotoCurator 实例在运行时返回其端口, 否则 None。"""
+    # 环回直连: 系统代理 (Clash 等) 可能劫持 127.0.0.1 请求导致误判"无运行实例"而重复起服务
     for p in range(8765, 8776):
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/state", timeout=0.5) as resp:
+            with _LOOPBACK_OPENER.open(f"http://127.0.0.1:{p}/api/state", timeout=0.5) as resp:
                 if resp.status == 200 and b"settings" in resp.read():
                     return p
         except Exception:
